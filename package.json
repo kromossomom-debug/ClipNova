@@ -1,0 +1,78 @@
+{
+  "name": "clipnova",
+  "productName": "ClipNova",
+  "version": "1.2.0",
+  "description": "Editor de vídeo para Windows e Linux",
+  "main": "src/main.js",
+  "homepage": "https://github.com/kromossomom-debug/ClipNova",
+  "repository": "github:kromossomom-debug/ClipNova",
+  "author": {
+    "name": "kromossomom-debug",
+    "email": "kromossomo.m@gmail.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:linux": "electron-builder --linux AppImage deb"
+  },
+  "build": {
+    "appId": "com.peewxx.clipnova",
+    "productName": "ClipNova",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "synopsis": "Editor de vídeo com linha do tempo, efeitos e IA",
+      "icon": "build/icon.png",
+      "executableName": "clipnova"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libasound2 | libasound2t64"
+      ]
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.3.0"
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3"
+  },
+  "allowScripts": {
+    "electron@44.9.0": true,
+    "ffmpeg-static@5.3.0": true
+  }
+}
