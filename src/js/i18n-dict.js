@@ -467,6 +467,19 @@ export default {
   'Fechar': ['Close', 'Cerrar', 'Закрыть'],
   'Abrir pasta': ['Open folder', 'Abrir carpeta', 'Открыть папку'],
 
+  // ---------- support ----------
+  '☕ Apoiar': ['☕ Support', '☕ Apoyar', '☕ Поддержать'],
+  'Apoie o ClipNova': ['Support ClipNova', 'Apoya ClipNova', 'Поддержать ClipNova'],
+  '☕ Apoie o ClipNova': ['☕ Support ClipNova', '☕ Apoya ClipNova', '☕ Поддержать ClipNova'],
+  'O ClipNova é gratuito. Se ele te ajudou, considere apoiar o desenvolvimento.': ['ClipNova is free. If it helped you, please consider supporting its development.', 'ClipNova es gratuito. Si te ha ayudado, considera apoyar su desarrollo.', 'ClipNova бесплатен. Если он вам помог, поддержите разработку.'],
+  'Escaneie o QR Code no app do seu banco ou use a chave abaixo.': ['Scan the QR code in your banking app (Brazil) or use the key below.', 'Escanea el código QR en la app de tu banco (Brasil) o usa la clave de abajo.', 'Отсканируйте QR-код в банковском приложении (Бразилия) или используйте ключ ниже.'],
+  'Copiar chave': ['Copy key', 'Copiar clave', 'Копировать ключ'],
+  'Pix copia e cola': ['Pix copy & paste code', 'Código Pix para copiar', 'Код Pix'],
+  '{0} copiado!': ['{0} copied!', '¡{0} copiado!', '{0} скопирован!'],
+  'Chave Pix': ['Pix key', 'Clave Pix', 'Ключ Pix'],
+  'Código Pix': ['Pix code', 'Código Pix', 'Код Pix'],
+  'Não foi possível copiar': ['Could not copy', 'No se pudo copiar', 'Не удалось скопировать'],
+
   // ---------- tour ----------
   'Pular tour': ['Skip tour', 'Saltar recorrido', 'Пропустить'],
   'Anterior': ['Back', 'Anterior', 'Назад'],

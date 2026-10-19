@@ -278,3 +278,16 @@ button.link { background: transparent; border: 0; color: var(--muted); padding: 
 button.link:hover { color: var(--text); background: transparent; }
 .home-top { display: flex; align-items: center; gap: 12px; }
 .home-top .lang { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+
+/* support */
+.support-btn { margin-left: auto; background: #ffdd00; color: #1a1a1a; border: 0; font-weight: 600; border-radius: 8px; padding: 6px 14px; }
+.support-btn:hover { background: #ffe94d; }
+.home-top .support-btn + .lang { margin-left: 8px; }
+.support-ico { font-size: 15px; width: 30px; }
+button.bmc { display: flex; width: 100%; justify-content: center; margin: 16px 0 14px; padding: 11px; background: #ffdd00; color: #1a1a1a; border: 0; font-weight: 700; font-size: 15px; border-radius: 10px; }
+button.bmc:hover { background: #ffe94d; }
+.pix { display: flex; gap: 16px; align-items: center; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.pix img { border-radius: 8px; background: #fff; flex: none; }
+.pix-info { min-width: 0; }
+.pix-key { font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 12px; background: var(--bg2); border: 1px solid var(--line2); border-radius: 6px; padding: 6px 8px; margin-top: 8px; word-break: break-all; user-select: text; }
+@media (max-width: 560px) { .pix { flex-direction: column; } }

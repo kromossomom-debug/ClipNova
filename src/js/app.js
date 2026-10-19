@@ -16,6 +16,7 @@ import { modal, confirmModal, promptModal } from './ui.js';
 import * as AI from './ai.js';
 import { t, lang, locale, LANGUAGES, setLang, startDomTranslation } from './i18n.js';
 import { startTour, shouldAutoStart, tourActive } from './tour.js';
+import { openSupport } from './support.js';
 
 const $ = (id) => document.getElementById(id);
 const engine = new PlaybackEngine(() => markDirty());
@@ -168,6 +169,8 @@ function initChrome() {
   $('btn-home').innerHTML = icon('home');
   $('btn-tour').innerHTML = '<span style="font-weight:700;font-size:15px;width:18px;display:inline-block;text-align:center">?</span>';
   $('btn-tour').onclick = () => startTour();
+  $('btn-support').onclick = openSupport;
+  $('btn-support-home').onclick = openSupport;
   $('btn-undo').innerHTML = icon('undo');
   $('btn-redo').innerHTML = icon('redo');
   $('btn-export').querySelector('.ico').innerHTML = icon('export');

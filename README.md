@@ -7,6 +7,8 @@
 
 <p align="center">🇧🇷 Português · 🇺🇸 English · 🇪🇸 Español · 🇷🇺 Русский</p>
 
+<p align="center"><a href="https://buymeacoffee.com/kromossomoc"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-ffdd00?style=for-the-badge&labelColor=1a1a1a" alt="Buy Me a Coffee"></a></p>
+
 ---
 
 ## Download
@@ -101,6 +103,25 @@ src/js/ai.js       legendas, tradução, narração e ferramentas inteligentes
 src/js/i18n*.js    idiomas
 src/js/tour.js     tour guiado
 ```
+
+## ☕ Apoie o projeto / Support the project
+
+O ClipNova é gratuito. Se ele te ajudou, considere apoiar o desenvolvimento. Também dá para apoiar pelo botão **☕ Apoiar** dentro do app.
+
+<a href="https://buymeacoffee.com/kromossomoc"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-ffdd00?style=for-the-badge&labelColor=1a1a1a" alt="Buy Me a Coffee"></a>
+
+**Pix** (Brasil):
+
+<img src="src/assets/pix-qr.png" width="200" alt="QR Code Pix">
+
+Chave Pix (aleatória): `94af8068-d112-4c69-bcfa-8789b233246e`
+
+<details><summary>Pix copia e cola</summary>
+
+```
+00020126580014br.gov.bcb.pix013694af8068-d112-4c69-bcfa-8789b233246e5204000053039865802BR5908CLIPNOVA6006BRASIL62070503***63047773
+```
+</details>
 
 ## Licença
 
