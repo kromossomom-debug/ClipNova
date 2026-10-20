@@ -37,7 +37,7 @@ export async function mixAudio(project, rate = 48000, channels = 2) {
   return encodeWav(out);
 }
 
-function encodeWav(buf) {
+export function encodeWav(buf) {
   const ch = buf.numberOfChannels, n = buf.length, rate = buf.sampleRate;
   const ab = new ArrayBuffer(44 + n * ch * 2);
   const v = new DataView(ab);
@@ -67,7 +67,7 @@ export async function exportProject(project0, opts, onProgress, isCanceled) {
   const total = Math.max(1, Math.ceil(D * fps));
 
   onProgress({ phase: 'audio', frac: 0 });
-  const wav = await mixAudio(project);
+  const wav = opts.format === 'gif' ? null : await mixAudio(project);
   if (isCanceled()) return { canceled: true };
 
   // preload still images
@@ -77,7 +77,7 @@ export async function exportProject(project0, opts, onProgress, isCanceled) {
     if (img.complete) r(); else { img.onload = r; img.onerror = r; }
   })));
 
-  await window.native.exportStart({ outPath: opts.outPath, width: W, height: H, fps, crf: opts.crf, audioWav: wav });
+  await window.native.exportStart({ outPath: opts.outPath, width: W, height: H, fps, crf: opts.crf, audioWav: wav, format: opts.format });
 
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;

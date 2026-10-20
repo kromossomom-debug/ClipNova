@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, shell, safeStorage, desktopCapturer, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -22,6 +22,8 @@ function ffmpegPath() {
 
 const dataRoot = () => path.join(app.getPath('documents'), 'ClipNova');
 const projectsDir = () => path.join(dataRoot(), 'projects');
+const templatesDir = () => path.join(dataRoot(), 'templates');
+const libraryDir = () => path.join(dataRoot(), 'library');
 
 async function serveFile(filePath, request) {
   let stat;
@@ -76,6 +78,15 @@ app.whenReady().then(async () => {
     if (!full.startsWith(__dirname)) return new Response('forbidden', { status: 403 });
     return serveFile(full, request);
   });
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const src = sources.find((x) => x.id === pendingCapture.id) || sources[0];
+      const opts = { video: src };
+      if (pendingCapture.audio && process.platform === 'win32') opts.audio = 'loopback';
+      callback(opts);
+    } catch { callback({}); }
+  });
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -89,12 +100,16 @@ const DIALOG_L10N = {
   'Áudio': { en: 'Audio', es: 'Audio', ru: 'Аудио' },
   'Mídia': { en: 'Media', es: 'Medios', ru: 'Медиа' },
   'Vídeo MP4': { en: 'MP4 video', es: 'Video MP4', ru: 'Видео MP4' },
+  'Imagem': { en: 'Image', es: 'Imagen', ru: 'Изображение' },
+  'GIF animado': { en: 'Animated GIF', es: 'GIF animado', ru: 'Анимированный GIF' },
+  'Áudio MP3': { en: 'MP3 audio', es: 'Audio MP3', ru: 'Аудио MP3' },
 };
 const L = (s) => DIALOG_L10N[s]?.[uiLang] || s;
 ipcMain.on('set-lang', (e, l) => { uiLang = l; });
 ipcMain.handle('pick-media', async (e, kind) => {
   const filters = kind === 'audio'
     ? [{ name: L('Áudio'), extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus'] }]
+    : kind === 'image' ? [{ name: L('Imagem'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }]
     : [{ name: L('Mídia'), extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] }];
   const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: ['openFile', 'multiSelections'], filters });
   return r.canceled ? [] : r.filePaths;
@@ -102,11 +117,19 @@ ipcMain.handle('pick-media', async (e, kind) => {
 
 ipcMain.handle('file-exists', async (e, p) => { try { await fsp.access(p); return true; } catch { return false; } });
 
-ipcMain.handle('save-recording', async (e, projectId, bytes, ext) => {
+ipcMain.handle('save-recording', async (e, projectId, bytes, ext, kind = 'audio') => {
   const dir = path.join(projectsDir(), projectId, 'recordings');
   await fsp.mkdir(dir, { recursive: true });
-  const raw = path.join(dir, `voz-${Date.now()}.${ext}`);
+  const raw = path.join(dir, `${kind === 'audio' ? 'voz' : kind}-${Date.now()}.${ext}`);
   await fsp.writeFile(raw, Buffer.from(bytes));
+  if (kind !== 'audio') {
+    const mp4 = raw.replace(/\.[^.]+$/, '.mp4');
+    const r = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+      '-pix_fmt', 'yuv420p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', mp4], { collect: false });
+    if (r.code !== 0) return raw;
+    await fsp.rm(raw, { force: true }).catch(() => {});
+    return mp4;
+  }
   // MediaRecorder WebM has no duration in its header and is mistaken for video;
   // remux to AAC/M4A so it imports as a normal audio file with a correct length.
   const out = raw.replace(/\.[^.]+$/, '.m4a');
@@ -155,22 +178,97 @@ ipcMain.handle('rename-project', async (e, id, name) => {
   return true;
 });
 
+// ---------- User templates ----------
+ipcMain.handle('templates-list', async () => {
+  const out = [];
+  for (const f of await fsp.readdir(templatesDir()).catch(() => [])) {
+    if (!f.endsWith('.json')) continue;
+    try { out.push(JSON.parse(await fsp.readFile(path.join(templatesDir(), f), 'utf8'))); } catch {}
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt);
+});
+ipcMain.handle('template-save', async (e, tpl) => {
+  await fsp.mkdir(templatesDir(), { recursive: true });
+  await fsp.writeFile(path.join(templatesDir(), `${tpl.id.replace(/[^\w-]/g, '')}.json`), JSON.stringify(tpl));
+  return true;
+});
+ipcMain.handle('template-delete', async (e, id) => {
+  await fsp.rm(path.join(templatesDir(), `${String(id).replace(/[^\w-]/g, '')}.json`), { force: true });
+  return true;
+});
+
+// ---------- Brand kit (global, shared by all projects) ----------
+ipcMain.handle('brand-get', async () => {
+  const s = await readSettings();
+  return { logos: [], colors: [], fontTitle: '', fontBody: '', ...(s.brand || {}) };
+});
+ipcMain.handle('brand-set', async (e, b) => {
+  const s = await readSettings();
+  s.brand = { logos: b.logos || [], colors: b.colors || [], fontTitle: b.fontTitle || '', fontBody: b.fontBody || '' };
+  await writeSettings(s);
+  return true;
+});
+
+// ---------- Generated music & sound effects (rendered once in the renderer, cached here) ----------
+const assetFile = (name) => path.join(libraryDir(), `${String(name).replace(/[^\w-]/g, '')}.m4a`);
+ipcMain.handle('library-asset', async (e, name) => { try { await fsp.access(assetFile(name)); return assetFile(name); } catch { return null; } });
+ipcMain.handle('save-library-asset', async (e, name, wav) => {
+  await fsp.mkdir(libraryDir(), { recursive: true });
+  const out = assetFile(name);
+  const tmp = out.replace(/\.m4a$/, '.wav');
+  await fsp.writeFile(tmp, Buffer.from(wav));
+  const r = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-c:a', 'aac', '-b:a', '192k', out], { collect: false });
+  if (r.code !== 0) return tmp;
+  await fsp.rm(tmp, { force: true }).catch(() => {});
+  return out;
+});
+
+// ---------- Screen recording ----------
+let pendingCapture = { id: null, audio: false };
+ipcMain.handle('capture-sources', async () => {
+  const list = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+  return list.map((x) => ({ id: x.id, name: x.name, screen: x.id.startsWith('screen'), thumb: x.thumbnail.toDataURL() }));
+});
+ipcMain.handle('capture-select', (e, id, audio) => { pendingCapture = { id, audio: !!audio }; return process.platform === 'win32' || !audio; });
+ipcMain.handle('win-minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
+ipcMain.handle('win-restore', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) { w.restore(); w.focus(); } });
+
 // ---------- Export ----------
 let exportJob = null;
 
-ipcMain.handle('pick-export-path', async (e, name) => {
+const EXPORT_TYPES = { mp4: 'Vídeo MP4', gif: 'GIF animado', mp3: 'Áudio MP3' };
+ipcMain.handle('pick-export-path', async (e, name, ext = 'mp4') => {
   const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
-    defaultPath: path.join(app.getPath('videos'), `${name}.mp4`),
-    filters: [{ name: L('Vídeo MP4'), extensions: ['mp4'] }],
+    defaultPath: path.join(app.getPath(ext === 'mp3' ? 'music' : 'videos'), `${name}.${ext}`),
+    filters: [{ name: L(EXPORT_TYPES[ext] || 'Vídeo MP4'), extensions: [ext] }],
   });
   return r.canceled ? null : r.filePath;
 });
 
+ipcMain.handle('export-audio', async (e, wav, outPath) => {
+  const tmpDir = await fsp.mkdtemp(path.join(app.getPath('temp'), 'clipnova-'));
+  const src = path.join(tmpDir, 'audio.wav');
+  await fsp.writeFile(src, Buffer.from(wav));
+  const r = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-c:a', 'libmp3lame', '-b:a', '192k', outPath]);
+  await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  return r.code === 0 ? { ok: true, path: outPath } : { ok: false, error: r.stderr || 'ffmpeg' };
+});
+
 ipcMain.handle('export-start', async (e, opts) => {
-  const { outPath, width, height, fps, crf, audioWav } = opts;
+  const { outPath, width, height, fps, crf, audioWav, format = 'mp4' } = opts;
   const tmpDir = await fsp.mkdtemp(path.join(app.getPath('temp'), 'clipnova-'));
   const args = ['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', 'pipe:0'];
   let wavPath = null;
+  if (format === 'gif') {
+    // two-pass palette in one filter graph keeps colours clean without a temp file
+    args.push('-vf', 'split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a', '-loop', '0', outPath);
+    const proc = spawn(ffmpegPath(), args, { windowsHide: true });
+    let log = '';
+    proc.stderr.on('data', (d) => { log = (log + d.toString()).slice(-4000); });
+    const done = new Promise((resolve) => proc.on('close', (code) => resolve(code)));
+    exportJob = { proc, done, tmpDir, outPath, getLog: () => log };
+    return true;
+  }
   if (audioWav) {
     wavPath = path.join(tmpDir, 'audio.wav');
     await fsp.writeFile(wavPath, Buffer.from(audioWav));

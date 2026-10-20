@@ -2,7 +2,7 @@
 import {
   S, on, emit, changed, select, seek, checkpoint, undo, redo, canUndo, canRedo, resetHistory, importPaths, selClip,
   splitAtPlayhead, deleteSelected, duplicateSelected, mirrorSelected, rotateSelected, freezeFrame, reverseSelected,
-  extractAudio, setRatio, toast, placeClip, mainTrack, addMedia,
+  extractAudio, setRatio, toast, placeClip, mainTrack, addMedia, closeGaps, frameSelected,
 } from './store.js';
 import { newProject, layout, deepClone, uid, RATIOS, clipDuration, sizeForRatio } from './model.js';
 import { PlaybackEngine, ensureVisuals, cache } from './media.js';
@@ -17,6 +17,13 @@ import * as AI from './ai.js';
 import { t, lang, locale, LANGUAGES, setLang, startDomTranslation } from './i18n.js';
 import { startTour, shouldAutoStart, tourActive } from './tour.js';
 import { openSupport } from './support.js';
+import { initQuickbar } from './quickbar.js';
+import { loadBrand } from './brand.js';
+import { openAutoCompose } from './autocompose.js';
+import { openRecorder, isRecording, stop as stopRecording } from './record.js';
+import { BUILTIN, applyBuiltin } from './templates.js';
+import { templateCard } from './panels.js';
+import { mixAudio } from './export.js';
 
 const $ = (id) => document.getElementById(id);
 const engine = new PlaybackEngine(() => markDirty());
@@ -57,7 +64,27 @@ async function showHome() {
       <div class="acts"><button data-act="rename">Renomear</button><button data-act="del">Excluir</button></div>
     </div>`).join('') : '<div class="empty-note">Nenhum projeto ainda. Clique em “Novo projeto”.</div>';
   list.forEach((p) => { $('drafts').querySelector(`[data-id="${p.id}"] .nm`).textContent = p.name; });
+  $('home-tpls').innerHTML = BUILTIN.filter((x) => x.kind === 'project').map((x) => templateCard(x)).join('');
 }
+
+$('home-tpls').addEventListener('click', async (e) => {
+  const card = e.target.closest('[data-tpl]');
+  if (!card) return;
+  const tpl = BUILTIN.find((x) => x.id === card.dataset.tpl);
+  const p = newProject(t(tpl.name), tpl.ratio || '16:9');
+  await openProject(p, true);
+  applyBuiltin(tpl);
+  resetHistory();
+});
+$('btn-auto').onclick = () => openAutoCompose(openProject);
+$('btn-rec-home').onclick = async () => {
+  const p = newProject(t('Gravação {0}', new Date().toLocaleString(locale)));
+  p.ratio = 'original';
+  await openProject(p, true);
+  S.libTab = 'record';
+  renderPanels();
+  openRecorder('screen');
+};
 
 $('drafts').addEventListener('click', async (e) => {
   const card = e.target.closest('.draft');
@@ -169,6 +196,10 @@ function initChrome() {
   $('btn-home').innerHTML = icon('home');
   $('btn-tour').innerHTML = '<span style="font-weight:700;font-size:15px;width:18px;display:inline-block;text-align:center">?</span>';
   $('btn-tour').onclick = () => startTour();
+  $('btn-keys').innerHTML = icon('keyboard');
+  $('btn-keys').onclick = openShortcuts;
+  $('btn-auto').querySelector('.plus').innerHTML = icon('ai');
+  $('btn-rec-home').querySelector('.plus').innerHTML = icon('record');
   $('btn-support').onclick = openSupport;
   $('btn-support-home').onclick = openSupport;
   $('btn-undo').innerHTML = icon('undo');
@@ -195,7 +226,7 @@ function initChrome() {
     ['split', 'Dividir (Ctrl+B)', splitAtPlayhead], ['trash', 'Excluir (Delete)', deleteSelected], ['copy', 'Duplicar (Ctrl+D)', duplicateSelected],
     '|', ['freeze', 'Congelar quadro', freezeFrame], ['reverse', 'Inverter clipe', reverseSelected], ['mirror', 'Espelhar', mirrorSelected],
     ['rotate', 'Girar 90°', rotateSelected], ['crop', 'Recortar', () => { const f = selClip(); if (f && f.clip.crop) { S.inspTab[f.clip.type] = 'Vídeo'; renderInspector(); } }],
-    ['extract', 'Extrair áudio', extractAudio],
+    ['extract', 'Extrair áudio', extractAudio], ['gap', 'Excluir lacunas', closeGaps],
   ];
   tb.innerHTML = '';
   for (const t of tools) {
@@ -248,10 +279,12 @@ on('context-menu', ({ x, y }) => {
   if (c.type === 'video') items.push(['Congelar quadro', '', freezeFrame], [c.reverseOf ? 'Desfazer inversão' : 'Inverter clipe', '', reverseSelected], ['Extrair áudio', '', extractAudio], ['Dividir por cenas', '', () => AI.splitScenes()]);
   if (c.type === 'video' || c.type === 'audio') items.push(['Remover silêncios', '', () => AI.removeSilences()], [c.enhanceOf ? 'Restaurar áudio original' : 'Melhorar voz', '', () => AI.enhanceVoice()]);
   if (c.type === 'video' || c.type === 'image') {
+    items.push(['Ajustar ao quadro', '', () => frameSelected('fit')], ['Preencher o quadro', '', () => frameSelected('fill')], ['Imagem em imagem', '', () => frameSelected('pip')]);
     if (f.track.kind === 'main') items.push(['Mover para sobreposição', '', () => moveToOverlay(f)]);
     else items.push(['Mover para faixa principal', '', () => moveToMain(f)]);
   }
   if (c.type === 'video' || c.type === 'audio') items.push([c.muted ? 'Ativar som' : 'Silenciar', '', () => { checkpoint(); c.muted = !c.muted; changed('structure'); }]);
+  if (f.track.kind !== 'main') items.push(['Excluir lacunas', '', closeGaps]);
   items.push('-', ['Excluir', 'Delete', deleteSelected]);
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
@@ -311,6 +344,7 @@ function pasteClip() {
 document.addEventListener('keydown', (e) => {
   if (!S.project || $('editor').classList.contains('hidden')) return;
   if ($('modal-root').children.length || tourActive()) return;
+  if (isRecording() && e.key === 'Escape') { stopRecording(); return; }
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
     if (e.key === 'Escape') document.activeElement.blur();
@@ -336,7 +370,21 @@ document.addEventListener('keydown', (e) => {
   else if (k === '+' || k === '=') setZoom(S.pps * 1.3);
   else if (k === '-') setZoom(S.pps / 1.3);
   else if (k === 'escape') select(null);
+  else if (e.key === '?') openShortcuts();
 });
+
+const SHORTCUTS = [
+  ['Espaço', 'Reproduzir / pausar'], ['← / →', 'Quadro anterior / próximo'], ['Shift + ← / →', 'Voltar / avançar 1 segundo'],
+  ['Home / End', 'Início / fim do projeto'], ['Ctrl + B', 'Dividir no cursor'], ['Delete', 'Excluir seleção'], ['Ctrl + D', 'Duplicar'],
+  ['Ctrl + C / Ctrl + V', 'Copiar / colar clipe'], ['Ctrl + Z / Ctrl + Y', 'Desfazer / refazer'], ['Ctrl + I', 'Importar mídia'],
+  ['Ctrl + S', 'Salvar agora'], ['Ctrl + E', 'Exportar'], ['+ / −', 'Aproximar / afastar a linha do tempo'], ['Ctrl + roda do mouse', 'Zoom na linha do tempo'],
+  ['Esc', 'Limpar seleção / parar gravação'], ['?', 'Mostrar atalhos'],
+];
+function openShortcuts() {
+  const m = modal(`<h2>Atalhos de teclado</h2><div class="keys">${SHORTCUTS.map(([k, d]) => `<kbd data-noi18n>${k.replace('Espaço', t('Espaço'))}</kbd><span>${d}</span>`).join('')}</div>
+    <div class="foot"><button class="primary" data-x>Fechar</button></div>`, { width: 520 });
+  m.el.querySelector('[data-x]').onclick = () => m.close();
+}
 
 // ---------- file drop from Explorer ----------
 let dragDepth = 0;
@@ -372,15 +420,29 @@ function openExport() {
     <div class="row"><label>Resolução</label><select data-res>${resOpts.map(([v, t]) => `<option value="${v}" ${v === Math.min(1080, short) || (short < 1080 && v === 720 && short >= 720) ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div class="row"><label>Taxa de quadros</label><select data-fps>${[24, 25, 30, 50, 60].map((v) => `<option ${v === p.fps ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
     <div class="row"><label>Qualidade</label><select data-crf><option value="26">Menor arquivo</option><option value="20" selected>Recomendada</option><option value="16">Alta</option></select></div>
-    <div class="row"><label>Formato</label><span class="muted">MP4 (H.264 + AAC)</span></div>
+    <div class="row"><label>Formato</label><div class="seg" data-fmt><button data-v="mp4" class="on">MP4</button><button data-v="gif">GIF</button><button data-v="mp3">Só áudio (MP3)</button></div></div>
     <div class="hint" data-info></div>
     <div class="foot"><button data-x>Cancelar</button><button class="primary" data-go>${icon('export')} Exportar</button></div>`);
   m.el.querySelector('[data-name]').value = p.name;
+  let fmt = 'mp4';
+  const rows = ['[data-res]', '[data-fps]', '[data-crf]'].map((s) => m.el.querySelector(s).closest('.row'));
+  m.el.querySelectorAll('[data-fmt] button').forEach((b) => {
+    b.onclick = () => {
+      fmt = b.dataset.v;
+      m.el.querySelectorAll('[data-fmt] button').forEach((x) => x.classList.toggle('on', x === b));
+      rows.forEach((r, i) => r.classList.toggle('hidden', fmt === 'mp3' || (fmt === 'gif' && i > 0)));
+      if (fmt === 'gif' && +m.el.querySelector('[data-res]').value > 720) m.el.querySelector('[data-res]').value = '480';
+      info();
+    };
+  });
   const info = () => {
     const s = +m.el.querySelector('[data-res]').value;
     const k = s / short;
     const even = (x) => Math.round(x / 2) * 2;
-    m.el.querySelector('[data-info]').textContent = `${even(p.width * k)}×${even(p.height * k)} · duração ${fmtTime(p.duration, p.fps)}`;
+    const el = m.el.querySelector('[data-info]');
+    if (fmt === 'mp3') el.textContent = t('Somente o som do projeto · duração {0}', fmtTime(p.duration, p.fps));
+    else if (fmt === 'gif') el.textContent = t('{0} · 15 fps, sem som · ideal para até 15 s', `${even(p.width * k)}×${even(p.height * k)}`) + (p.duration > 30 ? ' — ' + t('vídeo longo: o GIF ficará pesado') : '');
+    else el.textContent = `${even(p.width * k)}×${even(p.height * k)} · ${t('duração')} ${fmtTime(p.duration, p.fps)}`;
   };
   m.el.querySelector('[data-res]').onchange = info; info();
   m.el.querySelector('[data-x]').onclick = () => m.close();
@@ -389,13 +451,32 @@ function openExport() {
     const s = +m.el.querySelector('[data-res]').value;
     const fps = +m.el.querySelector('[data-fps]').value;
     const crf = +m.el.querySelector('[data-crf]').value;
-    const outPath = await window.native.pickExportPath(name.replace(/[\\/:*?"<>|]/g, '_'));
+    const outPath = await window.native.pickExportPath(name.replace(/[\\/:*?"<>|]/g, '_'), fmt);
     if (!outPath) return;
     m.close();
-    const k = s / short;
+    if (fmt === 'mp3') { exportAudioOnly(outPath); return; }
+    const k = Math.min(s, fmt === 'gif' ? 720 : s) / short;
     const even = (x) => Math.round(x / 2) * 2;
-    runExport({ outPath, width: even(p.width * k), height: even(p.height * k), fps, crf });
+    runExport({ outPath, width: even(p.width * k), height: even(p.height * k), fps: fmt === 'gif' ? 15 : fps, crf, format: fmt });
   };
+}
+
+async function exportAudioOnly(outPath) {
+  emit('busy', 'Mixando áudio…');
+  try {
+    const wav = await mixAudio(S.project);
+    if (!wav) { toast('O projeto não tem som para exportar', true); return; }
+    const res = await window.native.exportAudio(wav, outPath);
+    if (!res.ok) { toast('Falha na exportação: ' + (res.error || '').slice(-300), true); return; }
+    exportDone(res.path, null);
+  } finally { emit('busy', null); }
+}
+
+function exportDone(path, secs) {
+  const done = modal(`<h2>Exportação concluída ✓</h2><div class="muted" style="word-break:break-all" data-noi18n>${path}</div>${secs != null ? `<div class="hint">${t('Tempo: {0}s', secs)}</div>` : ''}
+    <div class="foot"><button data-x>Fechar</button><button class="primary" data-open>Abrir pasta</button></div>`);
+  done.el.querySelector('[data-x]').onclick = () => done.close();
+  done.el.querySelector('[data-open]').onclick = () => { window.native.showInFolder(path); done.close(); };
 }
 
 async function runExport(opts) {
@@ -418,11 +499,7 @@ async function runExport(opts) {
     m.close();
     if (res.canceled) { toast('Exportação cancelada'); return; }
     if (!res.ok) { toast('Falha na exportação: ' + (res.error || '').slice(-300), true); return; }
-    const secs = ((performance.now() - t0) / 1000).toFixed(0);
-    const done = modal(`<h2>Exportação concluída ✓</h2><div class="muted" style="word-break:break-all">${res.path}</div><div class="hint">Tempo: ${secs}s</div>
-      <div class="foot"><button data-x>Fechar</button><button class="primary" data-open>Abrir pasta</button></div>`);
-    done.el.querySelector('[data-x]').onclick = () => done.close();
-    done.el.querySelector('[data-open]').onclick = () => { window.native.showInFolder(res.path); done.close(); };
+    exportDone(res.path, ((performance.now() - t0) / 1000).toFixed(0));
   } catch (e) {
     m.close();
     await window.native.exportFinish(true).catch(() => {});
@@ -447,6 +524,8 @@ initTimeline();
 initInspector();
 initPanels();
 initStage(engine);
+initQuickbar();
+loadBrand();
 showHome();
 requestAnimationFrame(loop);
 window.addEventListener('beforeunload', () => { if (saveTimer) saveNow(); });

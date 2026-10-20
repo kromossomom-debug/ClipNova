@@ -44,9 +44,15 @@ No Linux, use o AppImage: `chmod +x ClipNova-*.AppImage && ./ClipNova-*.AppImage
 - **Texto:**
   - fonte, contorno, fundo, sombra e neon;
   - estilos rápidos e efeito máquina de escrever.
-- **Stickers.**
+- **Gráficos:** 14 formas (com gradiente e contorno), fundos de cor/gradiente e stickers.
 - **Áudio:** música, narração pelo microfone, volume até 200% e fade in/out.
-- **Exportação:** MP4 H.264/AAC de 480p a 4K, de 24 a 60 fps, renderizado quadro a quadro.
+- **Música e SFX:** 6 trilhas e 16 efeitos sonoros originais, gerados pelo próprio app (sem direitos autorais de terceiros).
+- **Gravar e criar:** grave a tela (com som do computador no Windows), a câmera, ou tela + câmera num círculo no canto.
+- **Modelos:** 8 modelos prontos (abertura, story, terço inferior, citação, contagem, encerramento, promoção…) e "salvar projeto como modelo".
+- **Criação automática:** escolha mídias, estilo, formato e duração — o vídeo é montado com cortes, transições, título e trilha.
+- **Kit da marca:** logos, cores e fontes salvos para todos os projetos.
+- **Layout:** barras de ícones recolhíveis dos dois lados, barra flutuante no reprodutor (recortar, ajustar, preencher, imagem em imagem) e aba Fade.
+- **Exportação:** MP4 H.264/AAC de 480p a 4K, de 24 a 60 fps, renderizado quadro a quadro; GIF animado; ou só o áudio em MP3.
 - **Tour guiado** na primeira vez que o editor é aberto (pode ser revisto pelo botão **?**).
 - **4 idiomas:** português (BR), inglês, espanhol e russo. A escolha fica na tela inicial.
 
@@ -76,6 +82,8 @@ Os recursos de IA usam a **sua própria chave gratuita do Google Gemini** ([obte
 | Ctrl+I | Importar |
 | Ctrl+E | Exportar |
 | + / − | Zoom |
+| ? | Lista de atalhos |
+| Esc | Para a gravação de tela |
 
 ## Desenvolvimento
 
@@ -102,6 +110,12 @@ src/js/inspector.js painel de propriedades
 src/js/ai.js       legendas, tradução, narração e ferramentas inteligentes
 src/js/i18n*.js    idiomas
 src/js/tour.js     tour guiado
+src/js/sfx.js      músicas e efeitos sonoros sintetizados
+src/js/record.js   gravação de tela e câmera
+src/js/templates.js modelos prontos e modelos do usuário
+src/js/autocompose.js criação automática
+src/js/brand.js    kit da marca
+src/js/quickbar.js barra flutuante do reprodutor
 ```
 
 ## ☕ Apoie o projeto / Support the project

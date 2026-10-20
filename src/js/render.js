@@ -29,6 +29,10 @@ export function clipBox(c, t, W, H, src) {
     box.w = L.w * kv.scale; box.h = L.h * kv.scale;
   } else if (c.type === 'sticker') {
     box.w = box.h = c.size * H * kv.scale * 1.15;
+  } else if (c.type === 'shape') {
+    box.w = Math.max(1, c.w * W) * kv.scale; box.h = Math.max(1, c.h * H) * kv.scale;
+  } else if (c.type === 'color') {
+    box.w = W * kv.scale; box.h = H * kv.scale;
   } else if (src) {
     const cr = c.crop || { l: 0, t: 0, r: 0, b: 0 };
     const s0 = Math.min(W / src.w, H / src.h);
@@ -40,6 +44,67 @@ export function clipBox(c, t, W, H, src) {
 }
 
 function lerp(a, b, p) { return a + (b - a) * p; }
+
+function paint(ctx, a, b, angle, w, h) {
+  if (!b) return a;
+  const r = ((angle ?? 90) * Math.PI) / 180, d = (Math.abs(Math.cos(r) * w) + Math.abs(Math.sin(r) * h)) / 2;
+  const g = ctx.createLinearGradient(-Math.cos(r) * d, -Math.sin(r) * d, Math.cos(r) * d, Math.sin(r) * d);
+  g.addColorStop(0, a); g.addColorStop(1, b);
+  return g;
+}
+
+// Path for a shape of size w×h centred on the origin. Returns false for outline-only shapes.
+export function shapePath(ctx, shape, w, h, radius = 0.2) {
+  const hw = w / 2, hh = h / 2, m = Math.min(w, h);
+  const poly = (pts) => { pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
+  ctx.beginPath();
+  switch (shape) {
+    case 'round': ctx.roundRect(-hw, -hh, w, h, radius * m * 0.5); break;
+    case 'circle': ctx.ellipse(0, 0, hw, hh, 0, 0, Math.PI * 2); break;
+    case 'triangle': poly([[0, -hh], [hw, hh], [-hw, hh]]); break;
+    case 'diamond': poly([[0, -hh], [hw, 0], [0, hh], [-hw, 0]]); break;
+    case 'hexagon': poly([...Array(6)].map((_, i) => [Math.cos((i * Math.PI) / 3) * hw, Math.sin((i * Math.PI) / 3) * hh])); break;
+    case 'star': poly([...Array(10)].map((_, i) => { const a = -Math.PI / 2 + (i * Math.PI) / 5, k = i % 2 ? 0.45 : 1; return [Math.cos(a) * hw * k, Math.sin(a) * hh * k]; })); break;
+    case 'heart':
+      ctx.moveTo(0, hh);
+      ctx.bezierCurveTo(-hw * 1.6, -hh * 0.05, -hw * 0.75, -hh * 1.35, 0, -hh * 0.45);
+      ctx.bezierCurveTo(hw * 0.75, -hh * 1.35, hw * 1.6, -hh * 0.05, 0, hh);
+      break;
+    case 'arrow': poly([[-hw, -hh * 0.35], [hw * 0.2, -hh * 0.35], [hw * 0.2, -hh], [hw, 0], [hw * 0.2, hh], [hw * 0.2, hh * 0.35], [-hw, hh * 0.35]]); break;
+    case 'bubble':
+      ctx.roundRect(-hw, -hh, w, h * 0.78, m * 0.18);
+      ctx.moveTo(-hw * 0.45, -hh + h * 0.74); ctx.lineTo(-hw * 0.6, hh); ctx.lineTo(-hw * 0.1, -hh + h * 0.74); ctx.closePath();
+      break;
+    case 'frame': ctx.rect(-hw, -hh, w, h); return false;
+    case 'ring': ctx.ellipse(0, 0, hw, hh, 0, 0, Math.PI * 2); return false;
+    case 'bar': ctx.roundRect(-hw, -hh, w, h, Math.min(h * 0.5, radius * m)); break;
+    case 'line': ctx.rect(-hw, -hh, w, h); break;
+    default: ctx.rect(-hw, -hh, w, h);
+  }
+  return true;
+}
+
+function drawShape(l, c, w, h) {
+  if (c.type === 'color') {
+    l.fillStyle = paint(l, c.color, c.color2, c.angle, w, h);
+    l.fillRect(-w / 2, -h / 2, w, h);
+    return;
+  }
+  const m = Math.min(w, h);
+  const outline = c.shape === 'frame' || c.shape === 'ring';
+  const sw = (c.stroke?.width || 0) * m * 0.1;
+  if (outline) {
+    // outline shapes: the fill colour is the stroke; thickness comes from the radius slider
+    const t = Math.max(1, (c.radius ?? 0.2) * m * 0.25);
+    shapePath(l, c.shape, w - t, h - t, c.radius);
+    l.lineWidth = t; l.strokeStyle = paint(l, c.fill, c.fill2, c.gradAngle, w, h); l.stroke();
+    return;
+  }
+  shapePath(l, c.shape, w, h, c.radius);
+  l.fillStyle = paint(l, c.fill, c.fill2, c.gradAngle, w, h);
+  l.fill();
+  if (sw > 0) { l.lineWidth = sw; l.lineJoin = 'round'; l.strokeStyle = c.stroke.color; l.stroke(); }
+}
 
 function cssFilter(c, W) {
   const a = c.adjust || {};
@@ -211,6 +276,8 @@ export class Renderer {
       l.textAlign = 'center'; l.textBaseline = 'middle';
       l.filter = cssFilter(c, W);
       l.fillText(c.text, 0, px * 0.05);
+    } else if (c.type === 'shape' || c.type === 'color') {
+      drawShape(l, c, box.w, box.h);
     }
     l.restore();
 

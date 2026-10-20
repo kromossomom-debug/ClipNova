@@ -219,6 +219,60 @@ export function addMedia(m, opts = {}) {
   return c;
 }
 
+// Insert a clip that behaves like a photo (colour card) into the magnetic main track at the playhead.
+export function addToMain(c, index) {
+  checkpoint();
+  const main = mainTrack();
+  main.clips.splice(index ?? (main.clips.length ? mainIndexAt(S.t) : 0), 0, c);
+  S.sel = { kind: 'clip', id: c.id };
+  changed('structure');
+  return c;
+}
+
+// Remove empty space between clips of a free track (the main track is always gapless).
+export function closeGaps() {
+  const f = selClip();
+  const tracks = f && f.track.kind !== 'main' ? [f.track] : S.project.tracks.filter((t) => t.kind !== 'main');
+  checkpoint();
+  let n = 0;
+  for (const tr of tracks) {
+    tr.clips.sort((a, b) => a.start - b.start);
+    let t = tr.clips.length ? tr.clips[0].start : 0;
+    for (const c of tr.clips) {
+      if (c.start > t + 1e-3) { c.start = t; n++; }
+      t = c.start + clipDuration(c);
+    }
+  }
+  changed('structure');
+  toast(n ? `${n} lacuna(s) removida(s)` : 'Nenhuma lacuna encontrada');
+}
+
+// Fit / fill the frame, or shrink into a corner (picture-in-picture). Works for video and photos.
+export function frameSelected(mode) {
+  const f = selClip();
+  if (!f || (f.clip.type !== 'video' && f.clip.type !== 'image')) { toast('Selecione um vídeo ou foto'); return; }
+  const c = f.clip, m = S.project.media[c.mediaId];
+  if (!m?.width) return;
+  checkpoint();
+  const W = S.project.width, H = S.project.height;
+  const cr = c.crop || { l: 0, t: 0, r: 0, b: 0 };
+  const sw = (1 - cr.l - cr.r) * m.width, sh = (1 - cr.t - cr.b) * m.height;
+  const fit = Math.min(W / sw, H / sh);
+  c.keyframes = [];
+  if (mode === 'fit') Object.assign(c, { x: 0, y: 0, scale: 1, rotation: 0 });
+  else if (mode === 'fill') Object.assign(c, { x: 0, y: 0, scale: Math.max(W / sw, H / sh) / fit, rotation: 0 });
+  else {
+    // cycle through the four corners
+    const corners = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+    const k = 0.32;
+    const cur = corners.findIndex(([sx, sy]) => Math.sign(c.x) === sx && Math.sign(c.y) === sy && Math.abs(c.scale - k) < 1e-3);
+    const [sx, sy] = corners[(cur + 1) % 4];
+    const bw = (sw * fit * k) / W, bh = (sh * fit * k) / H;
+    Object.assign(c, { scale: k, rotation: 0, x: sx * (0.5 - bw / 2 - 0.03), y: sy * (0.5 - bh / 2 - 0.04) });
+  }
+  changed('structure');
+}
+
 export function addClip(c, time = S.t) {
   checkpoint();
   placeClip(c, time);

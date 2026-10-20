@@ -1,9 +1,19 @@
 // Left library: media, audio, text, stickers, effects, transitions, filters.
-import { S, on, emit, importPaths, addMedia, addClip, toast, selClip, checkpoint, changed, setTransition, mainTrack } from './store.js';
-import { makeTextClip, makeStickerClip, makeEffectClip, FILTERS, TRANSITIONS, EFFECTS, TEXT_STYLES, STICKERS, deepClone, clipDuration } from './model.js';
-import { cache } from './media.js';
+import { S, on, emit, importPaths, addMedia, addClip, addToMain, toast, selClip, checkpoint, changed, setTransition, mainTrack } from './store.js';
+import {
+  makeTextClip, makeStickerClip, makeEffectClip, makeShapeClip, makeColorClip, makeMediaClip, FILTERS, TRANSITIONS, EFFECTS, TEXT_STYLES, STICKERS,
+  SHAPES, BACKGROUNDS, FONTS, deepClone, clipDuration,
+} from './model.js';
+import { cache, mediaUrl } from './media.js';
 import { icon } from './icons.js';
-import { modal } from './ui.js';
+import { modal, promptModal, confirmModal } from './ui.js';
+import { shapePath } from './render.js';
+import { encodeWav } from './export.js';
+import { MUSIC, SFX, soundFile, previewSound, stopPreview } from './sfx.js';
+import { BUILTIN, applyBuiltin, applyUserTemplate, saveAsTemplate, templateDuration } from './templates.js';
+import { brand, saveBrand } from './brand.js';
+import { openRecorder } from './record.js';
+import { t } from './i18n.js';
 import * as AI from './ai.js';
 
 // remembered form choices for the AI tab (per session)
@@ -11,8 +21,9 @@ const aiForm = { language: 'auto', maxWords: 7, style: 'Legenda', position: 'bot
 let aiStatus = null;
 
 const TABS = [
-  ['media', 'Mídia', 'media'], ['ai', 'IA', 'ai'], ['audio', 'Áudio', 'audio'], ['text', 'Texto', 'text'], ['stickers', 'Stickers', 'sticker'],
-  ['effects', 'Efeitos', 'effects'], ['transitions', 'Transições', 'transitions'], ['filters', 'Filtros', 'filters'],
+  ['media', 'Sua mídia', 'media'], ['record', 'Gravar e criar', 'record'], ['templates', 'Modelos', 'template'], ['music', 'Música e SFX', 'music'],
+  ['text', 'Texto', 'text'], ['graphics', 'Gráficos', 'shape'], ['transitions', 'Transições', 'transitions'], ['effects', 'Efeitos', 'effects'],
+  ['filters', 'Filtros', 'filters'], ['brand', 'Kit da marca', 'brand'], ['ai', 'IA', 'ai'],
 ];
 
 let tabsEl, panel;
@@ -24,11 +35,18 @@ export function initPanels() {
   tabsEl.innerHTML = TABS.map(([id, name, ic]) => `<button class="lib-tab" data-tab="${id}">${icon(ic)}${name}</button>`).join('');
   tabsEl.addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
-    if (b) { S.libTab = b.dataset.tab; render(); }
+    if (!b) return;
+    const ws = document.getElementById('workspace');
+    if (S.libTab === b.dataset.tab) ws.classList.toggle('lib-collapsed');
+    else ws.classList.remove('lib-collapsed');
+    S.libTab = b.dataset.tab;
+    render();
+    emit('resize');
   });
-  on('lib-tab', (t) => { S.libTab = t; render(); });
+  on('lib-tab', (tab) => { S.libTab = tab; document.getElementById('workspace').classList.remove('lib-collapsed'); render(); emit('resize'); });
+  on('brand', () => { if (S.libTab === 'brand') render(); });
   on('change', (k) => { if (k === 'media' || k === 'structure' || k === 'select') render(); });
-  on('media-visuals', () => { if (S.libTab === 'media' || S.libTab === 'audio') render(); });
+  on('media-visuals', () => { if (S.libTab === 'media' || S.libTab === 'music') render(); });
   panel.addEventListener('dragstart', (e) => {
     const it = e.target.closest('[data-drag]');
     if (!it) return;
@@ -44,8 +62,12 @@ const dragData = (o) => esc(JSON.stringify(o));
 
 export function render() {
   if (!S.project) return;
-  tabsEl.querySelectorAll('.lib-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.libTab));
-  const fn = { media: mediaTab, ai: aiTab, audio: audioTab, text: textTab, stickers: stickerTab, effects: effectsTab, transitions: transitionsTab, filters: filtersTab }[S.libTab];
+  const collapsed = document.getElementById('workspace').classList.contains('lib-collapsed');
+  tabsEl.querySelectorAll('.lib-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.libTab && !collapsed));
+  const fn = {
+    media: mediaTab, record: recordTab, templates: templatesTab, music: musicTab, ai: aiTab, text: textTab, graphics: graphicsTab,
+    effects: effectsTab, transitions: transitionsTab, filters: filtersTab, brand: brandTab,
+  }[S.libTab] || mediaTab;
   fn();
 }
 
@@ -56,7 +78,9 @@ function usedIds() {
 }
 
 function mediaTab() {
-  const items = Object.values(S.project.media).filter((m) => m.type !== 'audio' && !/[\\/]generated[\\/]/.test(m.path));
+  const all = Object.values(S.project.media).filter((m) => !/[\\/](generated|library)[\\/]/.test(m.path));
+  const items = all.filter((m) => m.type !== 'audio');
+  const sounds = all.filter((m) => m.type === 'audio');
   const used = usedIds();
   panel.innerHTML = `
     <div class="lib-actions"><button id="imp" class="primary">${icon('import')} Importar</button></div>
@@ -68,7 +92,8 @@ function mediaTab() {
         ${used.has(m.id) ? '<span class="used">Em uso</span>' : ''}
         <button class="add" title="Adicionar à linha do tempo">+</button>
       </div>`).join('')}</div>
-    ${items.length ? '<div class="hint" style="margin-top:10px">Arraste para a linha do tempo, ou clique em + para adicionar no cursor. Arraste sobre a faixa de cima para criar uma sobreposição.</div>' : '<div class="dropzone">Arraste vídeos e fotos aqui<br>ou clique em Importar</div>'}`;
+    ${sounds.length ? `<h3 style="margin-top:14px">Áudio</h3><div class="media-grid">${sounds.map((m) => audioItem(m, used)).join('')}</div>` : ''}
+    ${items.length || sounds.length ? '<div class="hint" style="margin-top:10px">Arraste para a linha do tempo, ou clique em + para adicionar no cursor. Arraste sobre a faixa de cima para criar uma sobreposição.</div>' : '<div class="dropzone">Arraste vídeos, fotos e áudios aqui<br>ou clique em Importar</div>'}`;
   panel.querySelector('#imp').onclick = async () => importPaths(await window.native.pickMedia('media'));
   panel.querySelectorAll('.media-item .add').forEach((b) => {
     b.onclick = (e) => { e.stopPropagation(); addMedia(S.project.media[b.parentElement.dataset.id]); };
@@ -202,27 +227,79 @@ export async function openAiSettings() {
 
 on('ai-settings', () => { S.libTab = 'ai'; render(); openAiSettings(); });
 
-function audioTab() {
-  const items = Object.values(S.project.media).filter((m) => m.type === 'audio' || (m.type === 'video' && false));
+function audioItem(m, used) {
+  return `<div class="media-item audio" draggable="true" data-drag="${dragData({ kind: 'media', mediaId: m.id })}" data-id="${m.id}" title="${esc(m.name)}">
+    ${icon('audio')}<div class="nm" data-noi18n>${esc(m.name)}</div><span class="badge">${fmt(m.duration)}</span>${used?.has(m.id) ? '<span class="used" style="position:static">Em uso</span>' : ''}
+    <button class="add" title="Adicionar no cursor">+</button>
+  </div>`;
+}
+
+let playing = null; // "kind:id" of the sound being previewed
+async function addSound(kind, id, name) {
+  emit('busy', 'Preparando o som…');
+  try {
+    const file = await soundFile(kind, id, encodeWav);
+    const [m] = await importPaths([file]);
+    if (!m) return;
+    m.name = t(name);
+    addMedia(m, { time: S.t });
+    toast('Som adicionado no cursor');
+  } catch (e) { toast('Falha ao gerar o som: ' + e.message, true); } finally { emit('busy', null); }
+}
+
+function musicTab() {
+  const items = Object.values(S.project.media).filter((m) => m.type === 'audio');
+  const row = (kind, x) => `<div class="snd" data-kind="${kind}" data-id="${x.id}" data-name="${esc(x.name)}">
+      <button class="icon-btn snd-play" title="Ouvir">${icon(playing === `${kind}:${x.id}` ? 'pause' : 'play')}</button>
+      <div class="grow"><div>${x.name}</div><div class="muted" style="font-size:11px">${kind === 'music' ? x.mood : `${x.dur.toFixed(1)}s`}</div></div>
+      <button class="snd-add" title="Adicionar no cursor">+</button></div>`;
   panel.innerHTML = `
     <div class="lib-actions"><button id="imp-a" class="primary">${icon('import')} Importar áudio</button></div>
-    <div class="rec-box">
-      <span class="rec-dot ${recorder ? 'live' : ''}"></span>
-      <div class="grow"><b>Narração</b><div class="muted" id="rec-time">${recorder ? 'Gravando…' : 'Grave sua voz pelo microfone'}</div></div>
-      <button id="rec">${recorder ? '■ Parar' : `${icon('mic')}`}</button>
-    </div>
-    <h3>Seus áudios</h3>
-    <div class="media-grid">${items.map((m) => `
-      <div class="media-item audio" draggable="true" data-drag="${dragData({ kind: 'media', mediaId: m.id })}" data-id="${m.id}" title="${esc(m.name)}">
-        ${icon('audio')}<div class="nm">${esc(m.name)}</div><span class="badge">${fmt(m.duration)}</span>
-        <button class="add" title="Adicionar no cursor">+</button>
-      </div>`).join('') || '<div class="muted">Nenhum áudio importado.</div>'}</div>
+    <h3>Músicas</h3>
+    <div class="snd-list">${MUSIC.map((x) => row('music', x)).join('')}</div>
+    <h3 style="margin-top:14px">Efeitos sonoros</h3>
+    <div class="snd-list">${SFX.map((x) => row('sfx', x)).join('')}</div>
+    <div class="hint">Músicas e efeitos originais gerados pelo ClipNova — livres para usar nos seus vídeos.</div>
+    <h3 style="margin-top:14px">Seus áudios</h3>
+    <div class="media-grid">${items.map((m) => audioItem(m)).join('') || '<div class="muted">Nenhum áudio importado.</div>'}</div>
     <div class="hint" style="margin-top:12px">Para usar o som de um vídeo separadamente, selecione o clipe e use “Extrair áudio” na barra da linha do tempo.</div>`;
   panel.querySelector('#imp-a').onclick = async () => importPaths(await window.native.pickMedia('audio'));
-  panel.querySelector('#rec').onclick = toggleRecording;
+  panel.querySelectorAll('.snd').forEach((el) => {
+    const { kind, id, name } = el.dataset;
+    el.querySelector('.snd-play').onclick = async () => {
+      const key = `${kind}:${id}`;
+      if (playing === key) { stopPreview(); playing = null; render(); return; }
+      playing = key; render();
+      try { await previewSound(kind, id, () => { if (playing === key) { playing = null; if (S.libTab === 'music') render(); } }); } catch (e) { playing = null; render(); toast(e.message, true); }
+    };
+    el.querySelector('.snd-add').onclick = () => addSound(kind, id, name);
+  });
   panel.querySelectorAll('.media-item .add').forEach((b) => {
     b.onclick = (e) => { e.stopPropagation(); addMedia(S.project.media[b.parentElement.dataset.id]); };
   });
+}
+
+// ---------- Gravar e criar ----------
+function recordTab() {
+  panel.innerHTML = `
+    <h3>Gravar</h3>
+    <div class="create-grid">
+      <button class="create-card" data-rec="screen">${icon('screen')}<b>Tela</b><span>Grave a tela inteira ou uma janela</span></button>
+      <button class="create-card" data-rec="camera">${icon('camera')}<b>Câmera</b><span>Grave com a webcam</span></button>
+      <button class="create-card" data-rec="both">${icon('pip')}<b>Tela e câmera</b><span>Tela com você num círculo no canto</span></button>
+      <button class="create-card" data-rec="voice">${icon('mic')}<b>Narração</b><span>${recorder ? 'Gravando… clique para parar' : 'Grave sua voz pelo microfone'}</span></button>
+    </div>
+    <div class="rec-box ${recorder ? '' : 'hidden'}"><span class="rec-dot live"></span><div class="grow"><b>Narração</b><div class="muted" id="rec-time">Gravando…</div></div><button id="rec">■ Parar</button></div>
+    <h3 style="margin-top:14px">Criar</h3>
+    <div class="create-grid">
+      <button class="create-card" data-create="tts">${icon('ai')}<b>Texto para fala</b><span>Narração com voz de IA</span></button>
+      <button class="create-card" data-create="captions">${icon('cc')}<b>Legendas automáticas</b><span>Transcreve a fala do vídeo</span></button>
+    </div>`;
+  panel.querySelectorAll('[data-rec]').forEach((b) => {
+    b.onclick = () => (b.dataset.rec === 'voice' ? toggleRecording() : openRecorder(b.dataset.rec));
+  });
+  if (panel.querySelector('#rec')) panel.querySelector('#rec').onclick = toggleRecording;
+  panel.querySelectorAll('[data-create]').forEach((b) => { b.onclick = () => { S.libTab = 'ai'; render(); }; });
 }
 
 async function toggleRecording() {
@@ -240,7 +317,7 @@ async function toggleRecording() {
       const blob = new Blob(chunks, { type: 'audio/webm' });
       const file = await window.native.saveRecording(S.project.id, new Uint8Array(await blob.arrayBuffer()), 'webm');
       const [m] = await importPaths([file]);
-      if (m) { m.name = `Narração ${new Date().toLocaleTimeString()}`; addMedia(m, { time: startT }); toast('Narração adicionada'); }
+      if (m) { m.name = `${t('Narração')} ${new Date().toLocaleTimeString()}`; addMedia(m, { time: startT }); toast('Narração adicionada'); }
       render();
     };
     rec.start();
@@ -287,10 +364,164 @@ function focusText() {
   setTimeout(() => { const ta = document.getElementById('text-input'); if (ta) { ta.focus(); ta.select(); } }, 50);
 }
 
-function stickerTab() {
-  panel.innerHTML = `<h3>Stickers</h3><div class="sticker-grid">${STICKERS.map((s) =>
-    `<button draggable="true" data-st="${s}" data-drag="${dragData({ kind: 'clip', clip: makeStickerClip(s) })}">${s}</button>`).join('')}</div>`;
+const shapeThumbs = {};
+function shapeThumb(id) {
+  if (shapeThumbs[id]) return shapeThumbs[id];
+  const c = document.createElement('canvas');
+  c.width = c.height = 96;
+  const x = c.getContext('2d');
+  x.translate(48, 48);
+  const w = id === 'bar' || id === 'line' ? 84 : 64, h = id === 'line' ? 6 : id === 'bar' ? 26 : 64;
+  const filled = shapePath(x, id, w, h, 0.25);
+  if (filled) { x.fillStyle = '#a99bff'; x.fill(); } else { x.lineWidth = 7; x.strokeStyle = '#a99bff'; x.stroke(); }
+  return (shapeThumbs[id] = c.toDataURL());
+}
+
+function newShape(id) {
+  const W = S.project.width, H = S.project.height;
+  const h = id === 'line' ? 0.012 : id === 'bar' ? 0.12 : id === 'frame' ? 0.92 : 0.3;
+  const w = id === 'line' || id === 'bar' ? 0.5 : id === 'frame' ? 0.94 : (h * H) / W;
+  const c = makeShapeClip(id, { w, h });
+  if (id === 'bar') Object.assign(c, { y: 0.33, radius: 0.3 });
+  if (id === 'frame' || id === 'ring') { c.fill = '#ffffff'; c.radius = 0.15; }
+  if (brand.colors[0]) c.fill = brand.colors[0];
+  return c;
+}
+
+function graphicsTab() {
+  const bg = (a, b) => (b ? `linear-gradient(135deg,${a},${b})` : a);
+  panel.innerHTML = `
+    <h3>Formas</h3>
+    <div class="tile-grid">${SHAPES.map(([id, name]) =>
+      `<div class="tile" draggable="true" data-shape="${id}" data-drag="${dragData({ kind: 'clip', clip: newShape(id) })}"><img src="${shapeThumb(id)}" width="40" height="40" alt="">${name}</div>`).join('')}</div>
+    <h3 style="margin-top:14px">Fundos</h3>
+    <div class="bg-grid">${BACKGROUNDS.map(([a, b], i) => `<button class="bg-tile" data-bg="${i}" title="${b ? 'Gradiente' : 'Cor sólida'}" style="background:${bg(a, b)}"></button>`).join('')}</div>
+    <div class="hint">Os fundos entram na faixa principal no ponto do cursor. Ótimos para títulos e encerramentos.</div>
+    <h3 style="margin-top:14px">Stickers</h3>
+    <div class="sticker-grid">${STICKERS.map((s) =>
+      `<button draggable="true" data-st="${s}" data-drag="${dragData({ kind: 'clip', clip: makeStickerClip(s) })}">${s}</button>`).join('')}</div>`;
+  panel.querySelectorAll('[data-shape]').forEach((el) => { el.onclick = () => addClip(newShape(el.dataset.shape)); });
+  panel.querySelectorAll('[data-bg]').forEach((el) => {
+    el.onclick = () => { const [a, b] = BACKGROUNDS[+el.dataset.bg]; addToMain(makeColorClip(a, b)); };
+  });
   panel.querySelectorAll('[data-st]').forEach((b) => { b.onclick = () => addClip(makeStickerClip(b.dataset.st)); });
+}
+
+// ---------- Modelos ----------
+let userTpls = null;
+async function loadUserTemplates() { userTpls = await window.native.templatesList().catch(() => []); if (S.libTab === 'templates') render(); }
+
+export function templateCard(tpl, extra = '') {
+  const [a, b] = tpl.colors;
+  const r = tpl.ratio === '9:16' ? '9 / 16' : '16 / 10';
+  return `<div class="tpl" data-tpl="${tpl.id}">
+    <div class="tpl-th" style="background:linear-gradient(135deg,${a},${b})"><span class="tpl-ratio">${tpl.ratio || (tpl.kind === 'overlay' ? 'Sobreposição' : 'Qualquer')}</span><span class="tpl-name">${tpl.name}</span></div>
+    <div class="tpl-meta"><span class="muted">${tpl.desc}</span><span class="muted">${templateDuration(tpl).toFixed(0)}s</span></div>${extra}
+  </div>`;
+}
+
+function templatesTab() {
+  if (userTpls === null) { userTpls = []; loadUserTemplates(); }
+  panel.innerHTML = `
+    <h3>Modelos prontos</h3>
+    <div class="tpl-grid">${BUILTIN.map((x) => templateCard(x)).join('')}</div>
+    <div class="hint">Num projeto vazio o modelo vira o projeto; com clipes, ele é inserido no cursor. Depois é só editar os textos e as cores.</div>
+    <h3 style="margin-top:14px">Meus modelos</h3>
+    <div class="lib-actions"><button id="tpl-save">${icon('plus')} Salvar projeto como modelo</button></div>
+    <div class="tpl-grid">${(userTpls || []).map((x) => `<div class="tpl" data-utpl="${x.id}">
+      <div class="tpl-th" style="background:#0b0d10 url('${x.thumb || ''}') center/cover"><span class="tpl-ratio">${x.ratio}</span></div>
+      <div class="tpl-meta"><span data-noi18n>${esc(x.name)}</span><button class="link" data-del="${x.id}" title="Excluir modelo">✕</button></div></div>`).join('') || '<div class="muted">Nenhum modelo salvo.</div>'}</div>`;
+  panel.querySelectorAll('[data-tpl]').forEach((el) => { el.onclick = () => applyBuiltin(BUILTIN.find((x) => x.id === el.dataset.tpl)); });
+  panel.querySelectorAll('[data-utpl]').forEach((el) => {
+    el.onclick = async (e) => {
+      const del = e.target.closest('[data-del]');
+      const tpl = userTpls.find((x) => x.id === el.dataset.utpl);
+      if (del) {
+        if (await confirmModal('Excluir modelo', 'O modelo será removido de “Meus modelos”.', 'Excluir', true)) { await window.native.templateDelete(tpl.id); loadUserTemplates(); }
+        return;
+      }
+      applyUserTemplate(tpl);
+    };
+  });
+  panel.querySelector('#tpl-save').onclick = async () => {
+    if (S.project.tracks.every((x) => !x.clips.length)) { toast('Adicione algo à linha do tempo primeiro'); return; }
+    const name = await promptModal('Nome do modelo', S.project.name);
+    if (!name) return;
+    const { snapshotThumb } = await import('./stage.js');
+    await saveAsTemplate(name, snapshotThumb());
+    loadUserTemplates();
+  };
+}
+
+// ---------- Kit da marca ----------
+function brandTab() {
+  const fontOpts = (cur) => `<option value="">Padrão</option>${FONTS.map((f) => `<option value="${esc(f)}" ${f === cur ? 'selected' : ''} data-noi18n>${esc(f)}</option>`).join('')}`;
+  panel.innerHTML = `
+    <div class="hint">O kit da marca vale para todos os projetos: logos, cores e fontes sempre à mão.</div>
+    <h3>Logos</h3>
+    <div class="media-grid">${brand.logos.map((p, i) => `<div class="media-item logo-item" data-logo="${i}" style="background-image:url('${mediaUrl(p)}')" title="${esc(p)}"><button class="add" title="Adicionar ao vídeo">+</button><button class="del" data-dellogo="${i}" title="Remover">✕</button></div>`).join('')}</div>
+    <div class="lib-actions" style="margin-top:8px"><button id="logo-add">${icon('import')} Adicionar logo</button></div>
+    <h3 style="margin-top:14px">Cores</h3>
+    <div class="swatches big">${brand.colors.map((c, i) => `<button class="sw" data-col="${i}" title="${c} — clique para aplicar à seleção" style="background:${c}"><span data-delcol="${i}">✕</span></button>`).join('')}
+      <label class="sw add" title="Adicionar cor">+<input type="color" id="col-add" value="#7c5cff"></label></div>
+    <div class="hint">Clique numa cor para aplicá-la ao texto, forma ou fundo selecionado.</div>
+    <h3 style="margin-top:14px">Fontes</h3>
+    <div class="row"><label>Títulos</label><select id="f-title">${fontOpts(brand.fontTitle)}</select></div>
+    <div class="row"><label>Textos</label><select id="f-body">${fontOpts(brand.fontBody)}</select></div>
+    <div class="btn-row"><button id="f-apply">Aplicar à seleção</button><button id="f-all">Aplicar a todos os textos</button></div>`;
+  panel.querySelector('#logo-add').onclick = async () => {
+    const files = await window.native.pickMedia('image');
+    if (!files.length) return;
+    brand.logos = [...new Set([...brand.logos, ...files])];
+    saveBrand();
+  };
+  panel.querySelectorAll('[data-logo]').forEach((el) => {
+    el.onclick = async (e) => {
+      const i = +el.dataset.logo;
+      if (e.target.closest('[data-dellogo]')) { brand.logos.splice(i, 1); saveBrand(); return; }
+      const [m] = await importPaths([brand.logos[i]]);
+      if (!m) return;
+      const c = makeMediaClip(m);
+      const W = S.project.width, H = S.project.height;
+      const fit = Math.min(W / m.width, H / m.height);
+      c.scale = (0.16 * Math.min(W, H)) / (Math.max(m.width, m.height) * fit);
+      const bw = (m.width * fit * c.scale) / W, bh = (m.height * fit * c.scale) / H;
+      c.x = 0.5 - bw / 2 - 0.025; c.y = -0.5 + bh / 2 + 0.035;
+      c.dur = Math.max(3, S.project.duration - S.t) || 5;
+      addClip(c, S.t);
+      toast('Logo adicionado no canto superior direito');
+    };
+  });
+  panel.querySelector('#col-add').onchange = (e) => { if (!brand.colors.includes(e.target.value)) { brand.colors.push(e.target.value); saveBrand(); } };
+  panel.querySelectorAll('[data-col]').forEach((el) => {
+    el.onclick = (e) => {
+      const i = +el.dataset.col;
+      if (e.target.closest('[data-delcol]')) { brand.colors.splice(i, 1); saveBrand(); return; }
+      const f = selClip();
+      const c = f?.clip;
+      const key = c && { text: 'color', shape: 'fill', color: 'color' }[c.type];
+      if (!key) { toast('Selecione um texto, forma ou fundo'); return; }
+      checkpoint(); c[key] = brand.colors[i]; changed('structure');
+    };
+  });
+  panel.querySelector('#f-title').onchange = (e) => { brand.fontTitle = e.target.value; saveBrand(); };
+  panel.querySelector('#f-body').onchange = (e) => { brand.fontBody = e.target.value; saveBrand(); };
+  const fontFor = (c) => (c.size >= 0.075 ? brand.fontTitle : brand.fontBody) || brand.fontTitle || brand.fontBody;
+  panel.querySelector('#f-apply').onclick = () => {
+    const f = selClip();
+    if (!f || f.clip.type !== 'text') { toast('Selecione um texto'); return; }
+    const font = fontFor(f.clip);
+    if (!font) { toast('Escolha uma fonte da marca primeiro'); return; }
+    checkpoint(); f.clip.font = font; changed('structure');
+  };
+  panel.querySelector('#f-all').onclick = () => {
+    if (!brand.fontTitle && !brand.fontBody) { toast('Escolha uma fonte da marca primeiro'); return; }
+    checkpoint();
+    let n = 0;
+    for (const tr of S.project.tracks) for (const c of tr.clips) if (c.type === 'text') { c.font = fontFor(c); n++; }
+    changed('structure');
+    toast(t('Fonte aplicada a {0} texto(s)', n));
+  };
 }
 
 function effectsTab() {

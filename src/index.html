@@ -21,6 +21,20 @@
           <span class="t">Novo projeto</span>
           <span class="s">Importe vídeos, fotos e áudio para começar</span>
         </button>
+        <button id="btn-auto" class="new-card alt">
+          <span class="plus ai"></span>
+          <span class="t">Criar automaticamente</span>
+          <span class="s">Escolha mídias e um estilo — o vídeo é montado para você</span>
+        </button>
+        <button id="btn-rec-home" class="new-card alt2">
+          <span class="plus rec"></span>
+          <span class="t">Gravar tela ou câmera</span>
+          <span class="s">Grave um tutorial, uma apresentação ou um recado</span>
+        </button>
+      </section>
+      <section class="home-tpls">
+        <div class="section-head"><h2>Começar com um modelo</h2></div>
+        <div id="home-tpls" class="tpl-row"></div>
       </section>
       <section>
         <div class="section-head"><h2>Projetos</h2><span id="draft-count" class="muted"></span></div>
@@ -38,6 +52,7 @@
       <span id="save-state" class="muted save-state"></span>
       <div class="grow"></div>
       <button id="btn-support" class="icon-btn support-ico" title="Apoie o ClipNova">☕</button>
+      <button id="btn-keys" class="icon-btn" title="Atalhos de teclado (?)"></button>
       <button id="btn-tour" class="icon-btn" title="Tour guiado"></button>
       <button id="btn-undo" class="icon-btn" title="Desfazer (Ctrl+Z)"></button>
       <button id="btn-redo" class="icon-btn" title="Refazer (Ctrl+Y)"></button>
@@ -53,6 +68,7 @@
       <section class="viewer">
         <div class="viewer-head"><span>Reprodutor</span><div class="grow"></div><span id="viewer-info" class="muted"></span></div>
         <div id="stage" class="stage">
+          <div id="quick-bar" class="quick-bar hidden"></div>
           <div id="canvas-wrap" class="canvas-wrap">
             <canvas id="preview"></canvas>
             <div id="guides"></div>

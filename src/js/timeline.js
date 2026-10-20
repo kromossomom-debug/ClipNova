@@ -1,6 +1,6 @@
 // Multi-track timeline: rendering and pointer interactions.
 import { S, on, emit, checkpoint, changed, select, seek, mainTrack, overlaps, newTrack, cleanupTracks, moveMainClip, addMedia, addClip, toast } from './store.js';
-import { clipDuration, clamp, findClip, trackKindForClip, hasSourceRange, EFFECTS, TRACK_LABEL, uid } from './model.js';
+import { clipDuration, clamp, findClip, trackKindForClip, hasSourceRange, EFFECTS, SHAPES, TRACK_LABEL, uid } from './model.js';
 import { cache } from './media.js';
 import { icon } from './icons.js';
 
@@ -137,6 +137,9 @@ function clipHtml(c, track, isSel) {
   } else if (c.type === 'text') label = `T&nbsp; <span data-noi18n>${esc(c.text.replace(/\n/g, ' '))}</span>`;
   else if (c.type === 'sticker') label = `<span style="font-family:'Segoe UI Emoji','Noto Color Emoji'">${esc(c.text)}</span> Sticker`;
   else if (c.type === 'effect') { const e = EFFECTS.find((x) => x.id === c.effect); label = `<span>${e?.icon || '✦'}</span> <span>${esc(e?.name || c.effect)}</span>`; }
+  else if (c.type === 'shape') label = `◆ <span>${esc(SHAPES.find((x) => x[0] === c.shape)?.[1] || 'Forma')}</span>`;
+  else if (c.type === 'color') label = `<span>${c.color2 ? 'Gradiente' : 'Cor'}</span>`;
+  const bgStyle = c.type === 'color' ? `;background:${c.color2 ? `linear-gradient(${(c.angle ?? 135) + 90}deg,${c.color},${c.color2})` : c.color}` : '';
   const badges = [];
   if (hasSourceRange(c) && c.speed !== 1) badges.push(`${+c.speed.toFixed(2)}x`);
   if (c.reverseOf) badges.push('⟲');
@@ -151,7 +154,7 @@ function clipHtml(c, track, isSel) {
     if (c.fadeOut > 0) extra += `<div class="fadebar" style="right:0;width:${timeToX(c.fadeOut)}px;background:linear-gradient(270deg,rgba(0,0,0,.55),transparent)"></div>`;
   }
   const mutedIco = c.muted ? `<span class="muted-ico">🔇</span>` : '';
-  return `<div class="clip ${c.type} ${c.caption ? 'caption' : ''} ${isSel ? 'sel' : ''}" data-clip="${c.id}" style="left:${left}px;width:${w}px">
+  return `<div class="clip ${c.type} ${c.caption ? 'caption' : ''} ${isSel ? 'sel' : ''}" data-clip="${c.id}" style="left:${left}px;width:${w}px${bgStyle}">
     ${inner}<div class="lbl">${label}${badges.map((b) => `<span class="b">${b}</span>`).join('')}</div>${extra}${mutedIco}
     <div class="trim l" data-trim="l"></div><div class="trim r" data-trim="r"></div></div>`;
 }

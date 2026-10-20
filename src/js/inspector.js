@@ -4,14 +4,20 @@ import {
   setTransition, applyTransitionToAll, setRatio, mainTrack,
 } from './store.js';
 import {
-  clipDuration, findClip, FILTERS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, ANIMS_LOOP, BLEND_MODES, FONTS, TEXT_STYLES, EFFECTS, RATIOS, clamp, deepClone, baseVisual,
+  clipDuration, findClip, FILTERS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, ANIMS_LOOP, BLEND_MODES, FONTS, TEXT_STYLES, EFFECTS, RATIOS, SHAPES, clamp, deepClone, baseVisual,
 } from './model.js';
+import { brand } from './brand.js';
 import { icon } from './icons.js';
 import { t } from './i18n.js';
 import { applyStyleToAllCaptions, deleteAllCaptions } from './ai.js';
 
-let root;
+let root, pane;
 let updaters = [];
+
+const TAB_ICON = {
+  'Vídeo': 'transform', 'Básico': 'transform', 'Ajustar': 'filters', 'Animação': 'effects', 'Velocidade': 'speed', 'Áudio': 'vol',
+  'Duração': 'clock', 'Texto': 'text', 'Efeito': 'effects', 'Forma': 'shape', 'Cor': 'palette', 'Fade': 'fade', 'Projeto': 'gear', 'Transição': 'transitions',
+};
 const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -26,6 +32,7 @@ const h = (tag, attrs = {}, ...kids) => {
 
 export function initInspector() {
   root = document.getElementById('inspector');
+  on('brand', () => render());
   on('change', (kind) => { if (kind === 'props' || kind === 'move' || kind === 'trim') refresh(); else render(); });
   on('seek', () => refresh());
   render();
@@ -121,14 +128,13 @@ export function render() {
   if (!f) return renderProject();
   const c = f.clip;
   const m = S.project.media[c.mediaId];
-  const names = { video: 'Vídeo', image: 'Imagem', audio: 'Áudio', text: 'Texto', sticker: 'Sticker', effect: 'Efeito' };
-  root.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, names[c.type]),
-    h('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, m ? m.name : c.type === 'text' ? c.text.split('\n')[0] : '')));
+  const names = { video: 'Vídeo', image: 'Imagem', audio: 'Áudio', text: 'Texto', sticker: 'Sticker', effect: 'Efeito', shape: 'Forma', color: 'Cor' };
 
   const tabs = [];
   if (c.type === 'video' || c.type === 'image') {
     tabs.push(['Vídeo', () => [basicSection(c), cropSection(c), maskSection(c), chromaSection(c)]]);
     tabs.push(['Ajustar', () => [filterSection(c), adjustSection(c)]]);
+    tabs.push(['Fade', () => [fadeSection(c)]]);
     tabs.push(['Animação', () => animSections(c)]);
     if (c.type === 'video') tabs.push(['Velocidade', () => [speedSection(c)]]);
     if (c.type === 'video' && m?.hasAudio) tabs.push(['Áudio', () => [audioSection(c)]]);
@@ -136,9 +142,21 @@ export function render() {
   } else if (c.type === 'text') {
     tabs.push(['Texto', () => textSections(c)]);
     tabs.push(['Básico', () => [basicSection(c), durationSection(c)]]);
+    tabs.push(['Fade', () => [fadeSection(c)]]);
     tabs.push(['Animação', () => animSections(c)]);
   } else if (c.type === 'sticker') {
     tabs.push(['Básico', () => [basicSection(c), durationSection(c)]]);
+    tabs.push(['Fade', () => [fadeSection(c)]]);
+    tabs.push(['Animação', () => animSections(c)]);
+  } else if (c.type === 'shape') {
+    tabs.push(['Forma', () => shapeSections(c)]);
+    tabs.push(['Básico', () => [basicSection(c), durationSection(c)]]);
+    tabs.push(['Fade', () => [fadeSection(c)]]);
+    tabs.push(['Animação', () => animSections(c)]);
+  } else if (c.type === 'color') {
+    tabs.push(['Cor', () => [colorClipSection(c), durationSection(c)]]);
+    tabs.push(['Fade', () => [fadeSection(c)]]);
+    tabs.push(['Ajustar', () => [adjustSection(c)]]);
     tabs.push(['Animação', () => animSections(c)]);
   } else if (c.type === 'audio') {
     tabs.push(['Áudio', () => [audioSection(c), speedSection(c)]]);
@@ -146,16 +164,96 @@ export function render() {
     tabs.push(['Efeito', () => [effectSection(c), durationSection(c)]]);
   }
   let cur = S.inspTab[c.type];
-  if (!tabs.find((t) => t[0] === cur)) cur = tabs[0][0];
-  const bar = h('div', { class: 'insp-tabs' });
+  if (!tabs.find((x) => x[0] === cur)) cur = tabs[0][0];
+  shell(tabs.map((x) => x[0]), cur, (name) => { S.inspTab[c.type] = name; render(); });
+  pane.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, names[c.type]),
+    h('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, m ? m.name : c.type === 'text' ? c.text.split('\n')[0] : '')));
   const body = h('div', { class: 'insp-body' });
-  tabs.forEach(([name, fn]) => {
-    const b = h('button', { class: 'insp-tab' + (name === cur ? ' on' : '') }, name);
-    b.addEventListener('click', () => { S.inspTab[c.type] = name; render(); });
-    bar.append(b);
-    if (name === cur) body.append(...fn().filter(Boolean));
+  body.append(...tabs.find((x) => x[0] === cur)[1]().filter(Boolean));
+  pane.append(body);
+}
+
+// Right-hand rail of icons, one per property tab; clicking the open tab collapses the panel.
+function shell(tabs, cur, onPick) {
+  root.innerHTML = '';
+  pane = h('div', { class: 'insp-main' });
+  const rail = h('nav', { class: 'insp-rail' });
+  for (const name of tabs) {
+    const b = h('button', { class: 'insp-tab' + (name === cur && !S.inspCollapsed ? ' on' : ''), title: name, html: `${icon(TAB_ICON[name] || 'gear')}<span>${t(name)}</span>` });
+    b.addEventListener('click', () => {
+      S.inspCollapsed = name === cur ? !S.inspCollapsed : false;
+      document.getElementById('workspace').classList.toggle('insp-collapsed', !!S.inspCollapsed);
+      onPick(name);
+      emit('resize');
+    });
+    rail.append(b);
+  }
+  root.append(pane, rail);
+}
+
+// Brand-kit colours as one-click swatches.
+function brandSwatches(apply) {
+  if (!brand.colors.length) return null;
+  const row = h('div', { class: 'swatches' });
+  for (const col of brand.colors) {
+    const b = h('button', { class: 'sw', title: col, style: `background:${col}` });
+    b.onclick = () => { checkpoint(); apply(col); changed('structure'); render(); };
+    row.append(b);
+  }
+  return h('div', { class: 'row' }, h('label', {}, 'Kit da marca'), row);
+}
+
+function gradientToggle(c, key, def) {
+  const b = h('button', { class: 'toggle' + (c[key] ? ' on' : '') });
+  b.onclick = () => { checkpoint(); c[key] = c[key] ? '' : def; changed('structure'); render(); };
+  return h('div', { class: 'row' }, h('label', {}, 'Gradiente'), b);
+}
+
+function shapeSections(c) {
+  const grid = h('div', { class: 'preset-grid' });
+  SHAPES.forEach(([v, name]) => {
+    const b = h('button', { class: c.shape === v ? 'on' : '' }, name);
+    b.onclick = () => { checkpoint(); c.shape = v; changed('structure'); render(); };
+    grid.append(b);
   });
-  root.append(bar, body);
+  const outline = c.shape === 'frame' || c.shape === 'ring';
+  return [
+    sect('Forma', grid),
+    sect('Preenchimento', color(c, 'fill', outline ? 'Cor da borda' : 'Cor'), gradientToggle(c, 'fill2', '#ff4f7b'),
+      c.fill2 ? color(c, 'fill2', 'Cor 2') : null,
+      c.fill2 ? range(c, 'gradAngle', 'Ângulo', { min: -180, max: 180, step: 1, unit: '°', def: 90 }) : null,
+      brandSwatches((col) => { c.fill = col; })),
+    sect('Tamanho',
+      range(c, 'w', 'Largura', { min: 0.005, max: 1.5, mul: 100, unit: '%', def: 0.3 }),
+      range(c, 'h', 'Altura', { min: 0.005, max: 1.5, mul: 100, unit: '%', def: 0.3 }),
+      ['round', 'bar', 'frame', 'ring'].includes(c.shape) ? range(c, 'radius', outline ? 'Espessura' : 'Arredondar', { min: 0, max: 1, mul: 100, def: 0.2 }) : null),
+    outline ? null : sect('Contorno', color(c, 'stroke.color', 'Cor'), range(c, 'stroke.width', 'Espessura', { min: 0, max: 1, mul: 100, def: 0 })),
+  ];
+}
+
+function colorClipSection(c) {
+  return sect('Cor de fundo',
+    color(c, 'color', 'Cor'), gradientToggle(c, 'color2', '#ff4f7b'),
+    c.color2 ? color(c, 'color2', 'Cor 2') : null,
+    c.color2 ? range(c, 'angle', 'Ângulo', { min: -180, max: 180, step: 1, unit: '°', def: 135 }) : null,
+    brandSwatches((col) => { c.color = col; }),
+    h('div', { class: 'hint' }, 'Use como fundo de títulos, cartelas e encerramentos.'));
+}
+
+// Visual fade in/out (plus the matching audio fade for videos).
+function fadeSection(c) {
+  const max = Math.max(0.2, Math.min(10, clipDuration(c) / 2));
+  const withAudio = c.type === 'video';
+  const mk = (side, label) => range(c, `fade.${side}`, label, {
+    min: 0, max, step: 0.1, digits: 1, unit: 's', def: 0, structure: true,
+    get: () => (c.anim?.[side]?.type === 'fade' ? c.anim[side].dur : 0),
+    set: (v) => {
+      c.anim[side] = v > 0.05 ? { type: 'fade', dur: v } : { type: 'none', dur: 0.5 };
+      if (withAudio) c[side === 'in' ? 'fadeIn' : 'fadeOut'] = v > 0.05 ? v : 0;
+    },
+  });
+  return sect('Fade', mk('in', 'Fade in'), mk('out', 'Fade out'),
+    h('div', { class: 'hint' }, withAudio ? 'O fade também é aplicado ao som do clipe.' : 'Surge e some suavemente no início e no fim.'));
 }
 
 function kfBar(c) {
@@ -359,7 +457,8 @@ function textSections(c) {
     sect('Conteúdo', ta),
     sect('Estilos rápidos', styles),
     sect('Fonte',
-      select(c, 'font', 'Fonte', FONTS.map((f) => [f, f])),
+      select(c, 'font', 'Fonte', [...new Set([...FONTS, c.font])].map((f) => [f, f])),
+      brandSwatches((col) => { c.color = col; }),
       range(c, 'size', 'Tamanho', { min: 0.01, max: 0.4, mul: 1000, def: 0.07 }),
       color(c, 'color', 'Cor'),
       fmt,
@@ -385,7 +484,8 @@ function renderTransition() {
   const f = findClip(S.project, S.sel.id);
   if (!f) return renderProject();
   const c = f.clip;
-  root.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, 'Transição'), 'Entre dois clipes'));
+  shell(['Transição'], 'Transição', () => render());
+  pane.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, 'Transição'), 'Entre dois clipes'));
   const body = h('div', { class: 'insp-body' });
   const grid = h('div', { class: 'preset-grid' });
   TRANSITIONS.forEach((t) => {
@@ -402,12 +502,13 @@ function renderTransition() {
   all.onclick = () => applyTransitionToAll(c.transition?.type || 'fade', c.transition?.dur || 0.5);
   body.append(h('div', { class: 'btn-row' }, all));
   body.append(h('div', { class: 'hint' }, 'A transição sobrepõe o final de um clipe ao início do próximo.'));
-  root.append(body);
+  pane.append(body);
 }
 
 function renderProject() {
   const p = S.project;
-  root.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, 'Projeto'), 'Configurações'));
+  shell(['Projeto'], 'Projeto', () => render());
+  pane.append(h('div', { class: 'insp-title' }, h('span', { class: 'chip' }, 'Projeto'), 'Configurações'));
   const body = h('div', { class: 'insp-body' });
   const ratioOpts = [['original', 'Original'], ...Object.keys(RATIOS).map((r) => [r, r])];
   const grid = h('div', { class: 'preset-grid' });
@@ -427,6 +528,6 @@ function renderProject() {
   const n = p.tracks.reduce((a, t) => a + t.clips.length, 0);
   body.append(h('div', { class: 'hint' }, `${n} clipe(s) · ${Object.keys(p.media).length} mídia(s) · ${p.duration.toFixed(1)}s`));
   body.append(h('div', { class: 'hint' }, 'Selecione um clipe na linha do tempo para editar suas propriedades.'));
-  root.append(body);
+  pane.append(body);
   if (!mainTrack().clips.length) body.append(h('div', { class: 'hint' }, 'Dica: arraste arquivos direto para a janela.'));
 }

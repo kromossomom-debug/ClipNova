@@ -29,10 +29,11 @@ export function newProject(name = 'Projeto sem título', ratio = '16:9') {
   };
 }
 
-export const TRACK_LABEL = { main: 'Principal', video: 'Sobreposição', text: 'Texto', effect: 'Efeito', audio: 'Áudio' };
+export const TRACK_LABEL = { main: 'Principal', video: 'Sobreposição', graphic: 'Gráficos', text: 'Texto', effect: 'Efeito', audio: 'Áudio' };
 
 export function trackKindForClip(type) {
   if (type === 'text' || type === 'sticker') return 'text';
+  if (type === 'shape') return 'graphic';
   if (type === 'effect') return 'effect';
   if (type === 'audio') return 'audio';
   return 'video';
@@ -82,6 +83,19 @@ export function makeTextClip(text = t('Digite o texto')) {
 
 export function makeStickerClip(emoji) {
   return { id: uid(), type: 'sticker', start: 0, dur: 3, ...baseVisual(), text: emoji, size: 0.2 };
+}
+
+// Vector shape. w is relative to the frame width, h to the frame height.
+export function makeShapeClip(shape, o = {}) {
+  return {
+    id: uid(), type: 'shape', start: 0, dur: 4, ...baseVisual(), shape, w: 0.3, h: 0.3,
+    fill: '#7c5cff', fill2: '', gradAngle: 90, radius: 0.2, stroke: { color: '#ffffff', width: 0 }, ...o,
+  };
+}
+
+// Full-frame solid colour or gradient (backgrounds, title cards). Lives on the main track like a photo.
+export function makeColorClip(color = '#7c5cff', color2 = '', angle = 135) {
+  return { id: uid(), type: 'color', start: 0, dur: 4, ...baseVisual(), color, color2, angle, transition: { type: 'none', dur: 0.5 } };
 }
 
 export function makeEffectClip(effect) {
@@ -215,6 +229,18 @@ export const EFFECTS = [
   { id: 'blur-pulse', name: 'Desfoque pulsante', icon: '◌' },
   { id: 'strobe', name: 'Estroboscópio', icon: '⚡' },
   { id: 'invert', name: 'Negativo', icon: '◑' },
+];
+
+export const SHAPES = [
+  ['rect', 'Retângulo'], ['round', 'Arredondado'], ['circle', 'Círculo'], ['triangle', 'Triângulo'], ['diamond', 'Losango'],
+  ['hexagon', 'Hexágono'], ['star', 'Estrela'], ['heart', 'Coração'], ['arrow', 'Seta'], ['bubble', 'Balão de fala'],
+  ['line', 'Linha'], ['frame', 'Moldura'], ['ring', 'Anel'], ['bar', 'Barra inferior'],
+];
+
+export const BACKGROUNDS = [
+  ['#000000', ''], ['#ffffff', ''], ['#7c5cff', ''], ['#ff4f7b', ''], ['#ffb020', ''], ['#16c79a', ''], ['#1e90ff', ''], ['#202633', ''],
+  ['#7c5cff', '#ff4f7b'], ['#ff8a00', '#e52e71'], ['#00c6ff', '#0072ff'], ['#11998e', '#38ef7d'], ['#fc466b', '#3f5efb'],
+  ['#232526', '#414345'], ['#f7971e', '#ffd200'], ['#8e2de2', '#4a00e0'], ['#ee9ca7', '#ffdde1'], ['#0f2027', '#2c5364'],
 ];
 
 export const BLEND_MODES = [
