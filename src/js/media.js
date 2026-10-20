@@ -45,6 +45,12 @@ export async function importFile(path) {
     Object.assign(m, { type: 'audio', duration: pr.duration, hasAudio: true });
   } else if (VIDEO_EXT.includes(ext)) {
     const pr = await window.native.probeMedia(path);
+    // audio-only file in a video container (e.g. .webm/.mkv voice or music): import as audio
+    if (!pr.hasVideo && pr.hasAudio) {
+      if (!pr.duration) throw new Error('Não foi possível ler o áudio');
+      Object.assign(m, { type: 'audio', duration: pr.duration, hasAudio: true });
+      return m;
+    }
     const meta = await loadVideoMeta(url);
     Object.assign(m, { type: 'video', width: meta.w, height: meta.h, duration: pr.duration || meta.duration, hasAudio: pr.hasAudio });
     if (!meta.w) throw new Error('Arquivo sem faixa de vídeo');

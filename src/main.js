@@ -105,9 +105,15 @@ ipcMain.handle('file-exists', async (e, p) => { try { await fsp.access(p); retur
 ipcMain.handle('save-recording', async (e, projectId, bytes, ext) => {
   const dir = path.join(projectsDir(), projectId, 'recordings');
   await fsp.mkdir(dir, { recursive: true });
-  const file = path.join(dir, `voz-${Date.now()}.${ext}`);
-  await fsp.writeFile(file, Buffer.from(bytes));
-  return file;
+  const raw = path.join(dir, `voz-${Date.now()}.${ext}`);
+  await fsp.writeFile(raw, Buffer.from(bytes));
+  // MediaRecorder WebM has no duration in its header and is mistaken for video;
+  // remux to AAC/M4A so it imports as a normal audio file with a correct length.
+  const out = raw.replace(/\.[^.]+$/, '.m4a');
+  const r = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-vn', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', out], { collect: false });
+  if (r.code !== 0) return raw;
+  await fsp.rm(raw, { force: true }).catch(() => {});
+  return out;
 });
 
 // ---------- Projects ----------
